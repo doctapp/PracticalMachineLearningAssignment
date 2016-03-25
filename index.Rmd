@@ -1,103 +1,84 @@
 ---
-title: "Car Transmission Impact on Fuel Economy"
+title: "Exercise Manner Prediction"
 author: "Martin Tapp"
-date: "February 27, 2016"
+date: "March 25, 2016"
 output: html_document
 ---
 
 ### Summary
-This report summarizes the impact of car transmission type on fuel economy. It found that manual transmissions yield better fuel economy when compared to automatic transmissions with an average of 2.94 more miles per gallon. The results were derived from the Motor Trend Car Road Tests (`mtcars`). The full data processing is provided for anyone wishing to reproduce these results.
+
+We present a model which predicts how well people practice barbell lifts based on wearable data. The results were derived from the Human Activity Recognition (HAR) data which is available at http://groupware.les.inf.puc-rio.br/har. The full data processing is provided for anyone wishing to reproduce these results.
 
 
 ### Exploratory Data Analysis
 
-Looking at the `mtcars` data, we can see that there are 11 features and 32 data points. We can see that the data contains a number of features which can be treated as factors to simplify our analysis (notably `cyl`, `vs`, `am`, `gear` and `carb`).
+Looking at the data reveals many missing values which we remove from the training and testing datasets. Moreover, the first seven columns of the dataset are considered irrelevent to the prediction of exercise manner as they reffer to data such as user name and timestamps. We started with 160 features including `classe`, the outcome to predict, and are now left with 53 features to work with.
 
-```{r, results='hide'}
-data(mtcars)
-dim(mtcars) # results hidden
-mtcars$cyl <- factor(mtcars$cyl)
-mtcars$vs <- factor(mtcars$vs)
-mtcars$am <- factor(mtcars$am)
-mtcars$gear <- factor(mtcars$gear)
-mtcars$carb <- factor(mtcars$carb)
+```{r, results='hide', warning=FALSE, message=FALSE}
+read_csv <- function(path) {
+    raw <- read.csv(path, header=TRUE, na.strings=c('NA', ''),
+                    colClasses=c(rep('NULL', 7), rep(NA, 160-7)))
+    raw[,colSums(is.na(raw))==0]
+}
+raw_train <- read_csv('pml-training.csv')
+raw_test  <- read_csv('pml-testing.csv')
 ```
 
-#### Basic Transmission Type Influence
+The model we build is used to predict the `classe` outcome. Note that we will use our model against the testing dataset to predict how users performed.
+
+### Model Building
+
+Before building our model, we start by creating training and testing sets from the raw training dataset. The training set is used to train our model while the testing set is used to validate it. We also set the random seed for reproducability.
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+library(caret)
+library(randomForest)
+set.seed(32744)
+inTrain <- createDataPartition(raw_train$classe, p=0.8, list=F)
+training <- raw_train[inTrain,]
+testing  <- raw_train[-inTrain,]
+```
+
+Next, we build a model to predict `classe` which represents how a person fared against a specific exercise. We fit our model using all the features we selected in our exploratory data analysis. The fist model uses Random Forest. We determine the model's accuracy by predicting against the testing set and looking at the confusion matrix.
+
+```{r, results='hide', warning=FALSE, message=FALSE}
+model_rf <- randomForest(classe ~ ., data=training)
+pred_rf <- predict(model_rf, testing)
+cm_rf <- confusionMatrix(testing$classe, pred_rf)
+accuracy_rf <- round(cm_rf$overall[[1]] * 100, 2)
+```
+
+We can see that the model performed well against each `classe` yielding a 99.62% accuracy. Looking at the confusion matrix shows where the model is stronger (perfect for `A`) and weaker (5 mismatches for `B` and `D`).
 
 ```{r}
-fit_am <- lm(mpg ~ am, mtcars)
-round(summary(fit_am)$adj.r.squared * 100, 1)
-round(fit_am$coefficients, 1)
+cm_rf$table
 ```
 
-Let's look at the influence of transmission type (`am`) on `mpg` using a very basic model. We see that the automatic transmission (`intercept`, i.e., `am0`) gives an average of 17.1 mpg while the manual transmission (`am1`) yields an additinal 7.2 mpg over automatic transmissions. Unfortunately, this model only explains 33.8% of the `mpg` variance based on the adjusted R-squared. Therefore, we need to build a better model in order to assert the influence of transmission type on fuel economy.
+Next, we compare the Random Forest model to a Linear Discriminant Analysis (LDA) model and a Boosting model.
 
-#### Better Model
+```{r, results='hide', warning=FALSE, message=FALSE}
+model_lda <- train(classe ~ ., data=training, method="lda", verbose = FALSE)
+pred_lda <- predict(model_lda, testing)
+cm_lda <- confusionMatrix(testing$classe, pred_lda)
+accuracy_lda <- round(cm_lda$overall[[1]] * 100, 2)
+
+tc <- trainControl(allowParallel=T, method="cv", number=2)
+model_gbm <- train(classe ~ ., data=training, method="gbm", verbose = FALSE, trControl=tc)
+pred_gbm <- predict(model_gbm, testing)
+cm_gbm <- confusionMatrix(testing$classe, pred_gbm)
+accuracy_gbm <- round(cm_gbm$overall[[1]] * 100, 2)
+```
+
+The LDA model fairs poorly with an accuracy of 68.93% while Boosting gets close to Random Forest with 96.18%. Therefore, we will be using the Random Forest for predicting `classe`.
+
+### Predictions
+
+Finally, we predict `classe` for the original testing dataset using the Random Forest model which yields the following predictions.
 
 ```{r}
-fit_all <- lm(mpg ~ ., mtcars)
-round(summary(fit_all)$adj.r.squared * 100, 1)
+predict(model_rf, raw_test)
 ```
-
-Let's fit a linear model consisting of all the features used to predict `mpg`. We can see that this model explains 77.9% of the `mpg` variance. After inspecting the summary, we notice that this model exhibits high standard errors for some features. Therefore, let's use the `step` function to derive a better model which contains the most influencial features for predicting `mpg`.
-
-```{r, results='hide'}
-fit_best <- step(fit_all, k = log(nrow(mtcars))) # results hidden
-```
-```{r}
-summary(fit_best)$call
-round(summary(fit_best)$adj.r.squared * 100, 1)
-```
-
-This yields a model involving weight, quarter mile time, and transmission type for predicting `mpg`. Our new model explains 83.4% of the `mpg` variance. Comparing our three models clearly shows that `fit_best` is the best one as it is under it's significant level (Pr(F) of 0.91 < 1).
-
-```{r, results='hide'}
-anova(fit_am, fit_all, fit_best) # results hidden
-```
-
 
 ### Insights
 
-```{r}
-round(fit_best$coefficients, 2)
-```
-```{r, results='hide'}
-round(confint(fit_best), 2) # results hidden
-```
-
-From our model, a manual transmission yields better mileage than an automatic transmission. This is supported by looking at the intercept of the best model. We see that manual transmissions yield 2.94 more miles per gallon than automatics when keeping weight and quarter mile time constant. We also see this increase is between 0.05 and 5.83 mpg 95% of the time.
-
-
-### Appendix
-
-#### Transmission Type influence
-
-The following figure presents the influence of transmission type (`am`) on fuel economy (`mpg`) using a simplified linear model. We clearly see the benefit of manual over automatic transmissions.
-
-```{r, results='hide'}
-boxplot(mtcars$mpg ~ mtcars$am,
-        main="Transmission Type Influence on Fuel Economy",
-        xlab="Transmission Type (0 = automatic, 1 = manual)",
-        ylab="Fuel Economy (miles per US gallon)")
-```
-
-#### Relative Feature Influence
-
-The next figure presents the relative influence of each feature for the best fitted linear model. The linearity between the features is illustrated using a linear regression line.
-
-```{r, results='hide'}
-pairs(mtcars[,c('mpg', 'wt','qsec','am')], panel = function(x,y){
-	points(x,y)
-	abline(lm(y ~ x), col='red')
-}, main="Motor Trend Car Best Features Scatterplot Mattrix")
-```
-
-#### Residuals
-
-Finally, the following figure presents the residuals for the best fitted linear model. The Residuals vs Fitted shows no pattern, and the residuals appear linear on the Normal Q-Q plot emphasizing the validity of our model.
-
-```{r, results='hide'}
-par(mfrow = c(2, 2))
-plot(fit_best)
-```
+We presented a model for predicting how people fare in exercises based on data gathered using wearable devices. Finally, we saw that Random Forest provided the best accuracy compared to the other models used.
